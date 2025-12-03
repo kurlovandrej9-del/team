@@ -23,7 +23,7 @@ from telegram.error import BadRequest
 load_dotenv()
 
 # LOAD TOKENS & SECRETS
-BOT_TOKEN = os.getenv("BOT_TOKEN", "8173730157:AAHQBkWep3QXcAloG-g-WySrcTsp6lGew_A")
+BOT_TOKEN = os.getenv("BOT_TOKEN", "8053044453:AAGHu89oQfOKj_Q-nk7sr1XwTZhSXk1J9ZI")
 ACCESS_PASSWORD = os.getenv("ACCESS_PASSWORD", "Zxcv1236")
 admin_env = os.getenv("ADMIN_IDS", "844012884")
 ADMIN_IDS = [int(x) for x in admin_env.split(",")] if admin_env else []
@@ -32,9 +32,9 @@ DB_NAME = "team_stats.db"
 # DYNAMIC PATH RESOLUTION
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 IMG_PATHS = {
-    "welcome": "/logo.png",
-    "profile": "/profile.png",
-    "pay": "/pay.png"
+    "welcome": os.path.join(BASE_DIR, "logo.png"),
+    "profile": os.path.join(BASE_DIR, "profile.png"),
+    "pay": os.path.join(BASE_DIR, "pay.png")
 }
 
 # LOGGING
