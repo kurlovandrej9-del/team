@@ -23,7 +23,7 @@ from telegram.error import BadRequest
 load_dotenv()
 
 # LOAD TOKENS & SECRETS
-BOT_TOKEN = os.getenv("BOT_TOKEN", "8173730157:AAHQBkWep3QXcAloG-g-WySrcTsp6lGew_A")
+BOT_TOKEN = os.getenv("BOT_TOKEN", "8053044453:AAGHu89oQfOKj_Q-nk7sr1XwTZhSXk1J9ZI")
 ACCESS_PASSWORD = os.getenv("ACCESS_PASSWORD", "Zxcv1236")
 admin_env = os.getenv("ADMIN_IDS", "844012884")
 ADMIN_IDS = [int(x) for x in admin_env.split(",")] if admin_env else []
@@ -218,21 +218,12 @@ async def send_screen(update: Update, context: ContextTypes.DEFAULT_TYPE, text: 
 
 def get_main_menu_kb(is_admin_flag: bool):
     keyboard = [
+        [InlineKeyboardButton("🦣 Мои Мамонты", callback_data="menu_clients_0")],
         [
-            InlineKeyboardButton("📊 Моя Статистика", callback_data="menu_stats"),
-            InlineKeyboardButton("🦣 Мои Мамонты", callback_data="menu_clients_0")
+            InlineKeyboardButton("💳 Выплаты и Профиты", callback_data="menu_finances")
         ],
         [
-            InlineKeyboardButton("💳 История Выплат", callback_data="menu_salary"),
-            InlineKeyboardButton("📈 Лог Профитов", callback_data="menu_profits")
-        ],
-        [
-            InlineKeyboardButton("🏆 Топы", callback_data="menu_tops"),
-            InlineKeyboardButton("📊 Аналитика", callback_data="menu_analytics")
-        ],
-        [
-            InlineKeyboardButton("⚙️ Настройки", callback_data="menu_settings"),
-            InlineKeyboardButton("ℹ️ Помощь", callback_data="menu_help")
+            InlineKeyboardButton("🏆 Топы и Аналитика", callback_data="menu_tops_analytics")
         ]
     ]
     if is_admin_flag:
@@ -275,15 +266,103 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if len(db_user) > 7 and db_user[7]: roles.append("Менеджер")
         role_str = f" ({', '.join(roles)})" if roles else ""
         
+        # Объединяем приветствие со статистикой
+        user_id = user.id
+        async with aiosqlite.connect(DB_NAME) as db:
+            async with db.execute("""
+                SELECT full_name, total_earned, balance, is_analyst, is_manager,
+                       analyst_balance, analyst_total_earned,
+                       manager_balance, manager_total_earned
+                FROM users WHERE user_id = ?
+            """, (user_id,)) as cursor:
+                user_data = await cursor.fetchone()
+            
+            now = datetime.now()
+            month_start = now.replace(day=1, hour=0, minute=0, second=0)
+            
+            # Worker stats
+            async with db.execute("SELECT SUM(worker_share) FROM profits WHERE worker_id = ? AND timestamp >= ?", (user_id, month_start)) as cursor:
+                month_profit = (await cursor.fetchone())[0] or 0.0
+            async with db.execute("SELECT COUNT(*) FROM clients WHERE worker_id = ?", (user_id,)) as cursor:
+                clients_count = (await cursor.fetchone())[0]
+            
+            # Analyst stats
+            month_analyst_profit = 0.0
+            if user_data[3]:  # is_analyst
+                async with db.execute("SELECT SUM(analyst_share) FROM profits WHERE analyst_id = ? AND timestamp >= ?", (user_id, month_start)) as cursor:
+                    month_analyst_profit = (await cursor.fetchone())[0] or 0.0
+            
+            # Manager stats
+            month_manager_profit = 0.0
+            if user_data[4]:  # is_manager
+                async with db.execute("SELECT SUM(manager_share) FROM profits WHERE manager_id = ? AND timestamp >= ?", (user_id, month_start)) as cursor:
+                    month_manager_profit = (await cursor.fetchone())[0] or 0.0
+
+        earned = user_data[1]
+        if earned < 100: rank = "Новичок 🐣"
+        elif earned < 1000: rank = "Бывалый 👊"
+        elif earned < 5000: rank = "Хищник 🦈"
+        elif earned < 10000: rank = "Машина 🤖"
+        else: rank = "Легенда 👑"
+
+        now = datetime.now()
+        week_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+        week_start = week_start.replace(day=week_start.day - week_start.weekday())
+        day_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+        
+        async with aiosqlite.connect(DB_NAME) as db:
+            async with db.execute("SELECT SUM(worker_share) FROM profits WHERE worker_id = ? AND timestamp >= ?", (user_id, day_start)) as cursor:
+                day_profit = (await cursor.fetchone())[0] or 0.0
+            async with db.execute("SELECT SUM(worker_share) FROM profits WHERE worker_id = ? AND timestamp >= ?", (user_id, week_start)) as cursor:
+                week_profit = (await cursor.fetchone())[0] or 0.0
+
         text = (
             f"<b>👋 Добро пожаловать, {user.first_name}!</b>\n"
-            f"━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+            f"━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
             f"<b>🖥 Рабочее пространство:</b> <code>Active</code>\n"
             f"<b>🛡 Статус:</b> {'👨‍💻 Администратор' if is_admin_flag else '👤 Воркер'}{role_str}\n"
-            f"<b>📅 Дата:</b> <code>{datetime.now().strftime('%d.%m.%Y %H:%M')}</code>\n\n"
-            f"<i>👇 Используйте навигацию ниже для управления:</i>"
+            f"<b>📅 Дата:</b> <code>{datetime.now().strftime('%d.%m.%Y %H:%M')}</code>\n"
+            f"━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+            f"<b>📊 ЛИЧНЫЙ КАБИНЕТ</b>\n"
+            f"<b>👤 {user_data[0]}</b> | <b>🏆 {rank}</b>\n"
+            f"<b>💰 ВОРКЕР:</b> <code>${user_data[2]:,.2f}</code> к выплате | <code>${user_data[1]:,.2f}</code> всего\n"
+            f"<b>📊 Профит:</b> Месяц <code>${month_profit:,.2f}</code> | Неделя <code>${week_profit:,.2f}</code> | День <code>${day_profit:,.2f}</code>\n"
         )
-        await send_screen(update, context, text, "welcome", get_main_menu_kb(is_admin_flag))
+        
+        if user_data[3]:  # is_analyst
+            async with aiosqlite.connect(DB_NAME) as db:
+                async with db.execute("SELECT SUM(analyst_share) FROM profits WHERE analyst_id = ? AND timestamp >= ?", (user_id, day_start)) as cursor:
+                    day_analyst = (await cursor.fetchone())[0] or 0.0
+                async with db.execute("SELECT SUM(analyst_share) FROM profits WHERE analyst_id = ? AND timestamp >= ?", (user_id, week_start)) as cursor:
+                    week_analyst = (await cursor.fetchone())[0] or 0.0
+            
+            text += (
+                f"<b>🔬 АНАЛИТИК:</b> <code>${user_data[5]:,.2f}</code> к выплате | <code>${user_data[6]:,.2f}</code> всего\n"
+            )
+        
+        if user_data[4]:  # is_manager
+            async with aiosqlite.connect(DB_NAME) as db:
+                async with db.execute("SELECT SUM(manager_share) FROM profits WHERE manager_id = ? AND timestamp >= ?", (user_id, day_start)) as cursor:
+                    day_manager = (await cursor.fetchone())[0] or 0.0
+                async with db.execute("SELECT SUM(manager_share) FROM profits WHERE manager_id = ? AND timestamp >= ?", (user_id, week_start)) as cursor:
+                    week_manager = (await cursor.fetchone())[0] or 0.0
+            
+            text += (
+                f"<b>👔 МЕНЕДЖЕР:</b> <code>${user_data[7]:,.2f}</code> к выплате | <code>${user_data[8]:,.2f}</code> всего\n"
+            )
+        
+        text += (
+            f"<b>🦣 Мамонтов:</b> <code>{clients_count}</code>\n"
+        )
+        
+        # Прогресс до следующего ранга
+        next_rank_threshold = 100 if earned < 100 else (1000 if earned < 1000 else (5000 if earned < 5000 else (10000 if earned < 10000 else float('inf'))))
+        if next_rank_threshold != float('inf'):
+            progress = (earned / next_rank_threshold) * 100
+            progress_bar = "█" * int(progress / 5) + "░" * (20 - int(progress / 5))
+            text += f"<b>📈 До ранга:</b> <code>{progress:.1f}%</code> <code>{progress_bar}</code>\n"
+        
+        await send_screen(update, context, text, "profile", get_main_menu_kb(is_admin_flag))
         return ConversationHandler.END
     else:
         text = (
@@ -312,14 +391,8 @@ async def auth_password(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
             await db.commit()
         
-        text = (
-            f"<b>✅ Доступ разрешен</b>\n"
-            f"━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
-            f"<b>🎉 Добро пожаловать в команду!</b>\n\n"
-            f"<i>Теперь у вас есть доступ ко всем функциям бота.</i>\n\n"
-            f"<b>💡 Совет:</b> Начните с раздела <b>📊 Моя Статистика</b> для просмотра вашего профиля."
-        )
-        await send_screen(update, context, text, "welcome", get_main_menu_kb(bool(is_admin_flag)))
+        # Показываем приветствие со статистикой (как в start)
+        await start(update, context)
         return ConversationHandler.END
     else:
         reply = await msg.reply_text(
@@ -343,122 +416,8 @@ async def menu_main(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await start(update, context)
 
 async def menu_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    async with aiosqlite.connect(DB_NAME) as db:
-        async with db.execute("""
-            SELECT full_name, total_earned, balance, is_analyst, is_manager,
-                   analyst_balance, analyst_total_earned,
-                   manager_balance, manager_total_earned
-            FROM users WHERE user_id = ?
-        """, (user_id,)) as cursor:
-            user_data = await cursor.fetchone()
-        
-        now = datetime.now()
-        month_start = now.replace(day=1, hour=0, minute=0, second=0)
-        
-        # Worker stats
-        async with db.execute("SELECT SUM(worker_share) FROM profits WHERE worker_id = ? AND timestamp >= ?", (user_id, month_start)) as cursor:
-            month_profit = (await cursor.fetchone())[0] or 0.0
-        async with db.execute("SELECT COUNT(*) FROM clients WHERE worker_id = ?", (user_id,)) as cursor:
-            clients_count = (await cursor.fetchone())[0]
-        
-        # Analyst stats
-        month_analyst_profit = 0.0
-        if user_data[3]:  # is_analyst
-            async with db.execute("SELECT SUM(analyst_share) FROM profits WHERE analyst_id = ? AND timestamp >= ?", (user_id, month_start)) as cursor:
-                month_analyst_profit = (await cursor.fetchone())[0] or 0.0
-        
-        # Manager stats
-        month_manager_profit = 0.0
-        if user_data[4]:  # is_manager
-            async with db.execute("SELECT SUM(manager_share) FROM profits WHERE manager_id = ? AND timestamp >= ?", (user_id, month_start)) as cursor:
-                month_manager_profit = (await cursor.fetchone())[0] or 0.0
-
-    earned = user_data[1]
-    if earned < 100: rank = "Новичок 🐣"
-    elif earned < 1000: rank = "Бывалый 👊"
-    elif earned < 5000: rank = "Хищник 🦈"
-    elif earned < 10000: rank = "Машина 🤖"
-    else: rank = "Легенда 👑"
-
-    now = datetime.now()
-    week_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
-    week_start = week_start.replace(day=week_start.day - week_start.weekday())
-    day_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
-    
-    async with aiosqlite.connect(DB_NAME) as db:
-        async with db.execute("SELECT SUM(worker_share) FROM profits WHERE worker_id = ? AND timestamp >= ?", (user_id, day_start)) as cursor:
-            day_profit = (await cursor.fetchone())[0] or 0.0
-        async with db.execute("SELECT SUM(worker_share) FROM profits WHERE worker_id = ? AND timestamp >= ?", (user_id, week_start)) as cursor:
-            week_profit = (await cursor.fetchone())[0] or 0.0
-
-    text = (
-        f"<b>📊 ЛИЧНЫЙ КАБИНЕТ</b>\n"
-        f"━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        f"<b>👤 {user_data[0]}</b>\n"
-        f"<code>ID: {user_id}</code>\n\n"
-        f"<b>🏆 Ранг:</b> <b>{rank}</b>\n\n"
-        f"<b>💰 ФИНАНСЫ (ВОРКЕР)</b>\n"
-        f"├ <b>💳 К выплате:</b> <code>${user_data[2]:,.2f}</code>\n"
-        f"├ <b>💵 Всего заработано:</b> <code>${user_data[1]:,.2f}</code>\n"
-        f"├ <b>📅 Профит за месяц:</b> <code>${month_profit:,.2f}</code>\n"
-        f"├ <b>📆 Профит за неделю:</b> <code>${week_profit:,.2f}</code>\n"
-        f"└ <b>🌅 Профит за день:</b> <code>${day_profit:,.2f}</code>\n\n"
-    )
-    
-    if user_data[3]:  # is_analyst
-        async with aiosqlite.connect(DB_NAME) as db:
-            async with db.execute("SELECT SUM(analyst_share) FROM profits WHERE analyst_id = ? AND timestamp >= ?", (user_id, day_start)) as cursor:
-                day_analyst = (await cursor.fetchone())[0] or 0.0
-            async with db.execute("SELECT SUM(analyst_share) FROM profits WHERE analyst_id = ? AND timestamp >= ?", (user_id, week_start)) as cursor:
-                week_analyst = (await cursor.fetchone())[0] or 0.0
-        
-        text += (
-            f"<b>🔬 ФИНАНСЫ (АНАЛИТИК)</b>\n"
-            f"├ <b>💳 К выплате:</b> <code>${user_data[5]:,.2f}</code>\n"
-            f"├ <b>💵 Всего заработано:</b> <code>${user_data[6]:,.2f}</code>\n"
-            f"├ <b>📅 Профит за месяц:</b> <code>${month_analyst_profit:,.2f}</code>\n"
-            f"├ <b>📆 Профит за неделю:</b> <code>${week_analyst:,.2f}</code>\n"
-            f"└ <b>🌅 Профит за день:</b> <code>${day_analyst:,.2f}</code>\n\n"
-        )
-    
-    if user_data[4]:  # is_manager
-        async with aiosqlite.connect(DB_NAME) as db:
-            async with db.execute("SELECT SUM(manager_share) FROM profits WHERE manager_id = ? AND timestamp >= ?", (user_id, day_start)) as cursor:
-                day_manager = (await cursor.fetchone())[0] or 0.0
-            async with db.execute("SELECT SUM(manager_share) FROM profits WHERE manager_id = ? AND timestamp >= ?", (user_id, week_start)) as cursor:
-                week_manager = (await cursor.fetchone())[0] or 0.0
-        
-        text += (
-            f"<b>👔 ФИНАНСЫ (МЕНЕДЖЕР)</b>\n"
-            f"├ <b>💳 К выплате:</b> <code>${user_data[7]:,.2f}</code>\n"
-            f"├ <b>💵 Всего заработано:</b> <code>${user_data[8]:,.2f}</code>\n"
-            f"├ <b>📅 Профит за месяц:</b> <code>${month_manager_profit:,.2f}</code>\n"
-            f"├ <b>📆 Профит за неделю:</b> <code>${week_manager:,.2f}</code>\n"
-            f"└ <b>🌅 Профит за день:</b> <code>${day_manager:,.2f}</code>\n\n"
-        )
-    
-    text += (
-        f"<b>📂 АКТИВНОСТЬ</b>\n"
-        f"└ <b>🦣 Активных мамонтов:</b> <code>{clients_count}</code>\n\n"
-        f"<b>📈 ПРОГРЕСС</b>\n"
-    )
-    
-    # Прогресс до следующего ранга
-    next_rank_threshold = 100 if earned < 100 else (1000 if earned < 1000 else (5000 if earned < 5000 else (10000 if earned < 10000 else float('inf'))))
-    if next_rank_threshold != float('inf'):
-        progress = (earned / next_rank_threshold) * 100
-        progress_bar = "█" * int(progress / 5) + "░" * (20 - int(progress / 5))
-        text += f"└ <b>До следующего ранга:</b> <code>{progress:.1f}%</code>\n"
-        text += f"   <code>{progress_bar}</code>\n"
-        text += f"   <code>${earned:,.2f} / ${next_rank_threshold:,.2f}</code>\n"
-    
-    keyboard = [
-        [InlineKeyboardButton("📈 Детальная статистика", callback_data="menu_stats_detailed")],
-        [InlineKeyboardButton("🔙 Назад", callback_data="menu_main")]
-    ]
-    
-    await send_screen(update, context, text, "profile", InlineKeyboardMarkup(keyboard))
+    # Теперь статистика показывается в start, эта функция просто возвращает в главное меню
+    await start(update, context)
 
 async def menu_clients(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -600,12 +559,8 @@ async def menu_profits(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = (
         f"<b>📈 ЛОГ ПРОФИТОВ</b>\n"
         f"━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        f"<b>{period_name}</b>\n\n"
-        f"<b>📊 ОБЩАЯ СТАТИСТИКА</b>\n"
-        f"├ <b>📝 Всего профитов:</b> <code>{count}</code>\n"
-        f"├ <b>💰 Общая сумма:</b> <code>${total_profit:,.2f}</code>\n"
-        f"├ <b>📊 Средний профит:</b> <code>${avg_profit:,.2f}</code>\n"
-        f"└ <b>🏆 Максимальный:</b> <code>${max_profit:,.2f}</code>\n\n"
+        f"<b>{period_name}</b>\n"
+        f"<b>📊 Статистика:</b> <code>{count}</code> профитов | <code>${total_profit:,.2f}</code> всего | Средний <code>${avg_profit:,.2f}</code> | Макс <code>${max_profit:,.2f}</code>\n"
         f"<b>📋 ПОСЛЕДНИЕ ЗАПИСИ</b>\n"
     )
     
@@ -620,30 +575,25 @@ async def menu_profits(update: Update, context: ContextTypes.DEFAULT_TYPE):
             stage_emoji = {"Депозит": "💸", "Комиссия": "💼", "Налог": "📋"}.get(p[2], "📊")
             
             text += (
-                f"<b>{idx}.</b> <code>+${p[1]:,.2f}</code>\n"
-                f"   ├ <b>💵 Вход:</b> <code>${p[0]:,.2f}</code>\n"
-                f"   ├ <b>🦣 Мамонт:</b> <b>{p[3]}</b>\n"
-                f"   ├ <b>🏦 Направление:</b> {dir_emoji} <b>{p[4]}</b>\n"
-                f"   ├ <b>📑 Стадия:</b> {stage_emoji} <b>{p[2]}</b>\n"
+                f"<b>{idx}.</b> <code>+${p[1]:,.2f}</code> | {dir_emoji} <b>{p[4]}</b> | {stage_emoji} <b>{p[2]}</b>\n"
+                f"   <b>🦣 {p[3]}</b> | <b>💵 ${p[0]:,.2f}</b>"
             )
             if p[6] and p[6] > 0:
-                text += f"   ├ <b>🔬 Аналитик:</b> <code>${p[6]:,.2f}</code>\n"
+                text += f" | <b>🔬 ${p[6]:,.2f}</b>"
             if p[7] and p[7] > 0:
-                text += f"   ├ <b>👔 Менеджер:</b> <code>${p[7]:,.2f}</code>\n"
-            text += f"   └ <b>📅 {date_str}</b>\n\n"
+                text += f" | <b>👔 ${p[7]:,.2f}</b>"
+            text += f" | <b>📅 {date_str}</b>\n"
     
     keyboard = [
-        [
-            InlineKeyboardButton("🌅 День", callback_data="profit_period_day"),
-            InlineKeyboardButton("📆 Неделя", callback_data="profit_period_week")
-        ],
+        [InlineKeyboardButton("💳 Перейти к Истории Выплат", callback_data="finances_payouts")],
         [
             InlineKeyboardButton("📅 Месяц", callback_data="profit_period_month"),
             InlineKeyboardButton("📈 Все время", callback_data="profit_period_all")
         ],
         [
-            InlineKeyboardButton("📊 Детальная статистика", callback_data="profit_detailed"),
-            InlineKeyboardButton("📥 Экспорт", callback_data="profit_export")
+            InlineKeyboardButton("🌅 День", callback_data="profit_period_day"),
+            InlineKeyboardButton("📆 Неделя", callback_data="profit_period_week"),
+            InlineKeyboardButton("📊 Детали", callback_data="profit_detailed")
         ],
         [InlineKeyboardButton("🔙 Назад", callback_data="menu_main")]
     ]
@@ -728,33 +678,25 @@ async def menu_salary(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = (
         f"<b>💰 ИСТОРИЯ ВЫПЛАТ</b>\n"
         f"━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        f"<b>{period_name}</b>\n\n"
+        f"<b>{period_name}</b>\n"
     )
     
     # Показываем неполученные чеки
     if pending_payouts:
-        text += f"<b>⏳ НЕПОЛУЧЕННЫЕ ВЫПЛАТЫ</b>\n"
+        text += f"<b>⏳ НЕПОЛУЧЕННЫЕ:</b> "
         for p in pending_payouts:
             date_str = datetime.strptime(p[3], "%Y-%m-%d %H:%M:%S").strftime("%d.%m %H:%M")
             payout_emoji = "💎" if p[2] >= 5000 else ("💵" if p[2] >= 1000 else "💰")
-            text += (
-                f"├ {payout_emoji} <code>${p[2]:,.2f}</code> | <code>{date_str}</code>\n"
-            )
+            text += f"{payout_emoji} <code>${p[2]:,.2f}</code> ({date_str}) "
         text += "\n"
     
     text += (
-        f"<b>📊 ОБЩАЯ СТАТИСТИКА (ПОЛУЧЕНО)</b>\n"
-        f"├ <b>💸 Всего выплат:</b> <code>{count}</code>\n"
-        f"├ <b>💰 Общая сумма:</b> <code>${total_paid:,.2f}</code>\n"
-        f"├ <b>📊 Средняя выплата:</b> <code>${avg_payout:,.2f}</code>\n"
-        f"├ <b>🏆 Максимальная:</b> <code>${max_payout:,.2f}</code>\n"
+        f"<b>📊 Статистика:</b> <code>{count}</code> выплат | <code>${total_paid:,.2f}</code> всего | Средняя <code>${avg_payout:,.2f}</code> | Макс <code>${max_payout:,.2f}</code>\n"
     )
     if last_payout_date:
-        text += f"└ <b>📅 Последняя выплата:</b> <code>{days_since} дн. назад</code>\n\n"
-    else:
-        text += f"└ <b>📅 Последняя выплата:</b> <i>Нет данных</i>\n\n"
+        text += f"<b>📅 Последняя:</b> <code>{days_since} дн. назад</code>\n"
     
-    text += f"<b>📋 ПОСЛЕДНИЕ ПОЛУЧЕННЫЕ ВЫПЛАТЫ</b>\n"
+    text += f"<b>📋 ПОСЛЕДНИЕ ВЫПЛАТЫ</b>\n"
     
     if not payouts:
         text += "<i>▫️ Полученных выплат пока не было</i>\n"
@@ -763,9 +705,7 @@ async def menu_salary(update: Update, context: ContextTypes.DEFAULT_TYPE):
             date_str = datetime.strptime(p[3], "%Y-%m-%d %H:%M:%S").strftime("%d.%m %H:%M")
             payout_emoji = "💎" if p[2] >= 5000 else ("💵" if p[2] >= 1000 else "💰")
             text += (
-                f"<b>{idx}.</b> {payout_emoji} <code>${p[2]:,.2f}</code>\n"
-                f"   ├ <b>📅 Дата:</b> <code>{date_str}</code>\n"
-                f"   └ <b>🧾 Чек:</b> <code>{p[1]}</code>\n\n"
+                f"<b>{idx}.</b> {payout_emoji} <code>${p[2]:,.2f}</code> | <code>{date_str}</code> | <code>{p[1]}</code>\n"
             )
     
     keyboard = []
@@ -780,22 +720,36 @@ async def menu_salary(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )])
     
     keyboard.extend([
-        [
-            InlineKeyboardButton("🌅 День", callback_data="salary_period_day"),
-            InlineKeyboardButton("📆 Неделя", callback_data="salary_period_week")
-        ],
+        [InlineKeyboardButton("📈 Перейти к Логу Профитов", callback_data="finances_profits")],
         [
             InlineKeyboardButton("📅 Месяц", callback_data="salary_period_month"),
             InlineKeyboardButton("💰 Все время", callback_data="salary_period_all")
         ],
         [
-            InlineKeyboardButton("📊 График выплат", callback_data="salary_chart"),
-            InlineKeyboardButton("📥 Экспорт", callback_data="salary_export")
+            InlineKeyboardButton("🌅 День", callback_data="salary_period_day"),
+            InlineKeyboardButton("📆 Неделя", callback_data="salary_period_week"),
+            InlineKeyboardButton("📊 График", callback_data="salary_chart")
         ],
         [InlineKeyboardButton("🔙 Назад", callback_data="menu_main")]
     ])
     
     await send_screen(update, context, text, "pay", InlineKeyboardMarkup(keyboard))
+
+# --- 💳 ОБЪЕДИНЕННОЕ МЕНЮ ФИНАНСОВ ---
+async def menu_finances(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    section = 'payouts'  # По умолчанию показываем выплаты
+    
+    if query and query.data.startswith("finances_"):
+        section = query.data.split("_")[-1]
+        context.user_data['finances_section'] = section
+    else:
+        section = context.user_data.get('finances_section', 'payouts')
+    
+    if section == 'profits':
+        await menu_profits(update, context)
+    else:
+        await menu_salary(update, context)
 
 # --- 🏆 TOPS ---
 async def menu_tops(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -850,7 +804,7 @@ async def menu_tops(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     text = (
         f"<b>{period_name}</b>\n"
-        f"━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+        f"━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
     )
     
     if not tops:
@@ -894,13 +848,11 @@ async def menu_tops(update: Update, context: ContextTypes.DEFAULT_TYPE):
             
             if is_current_user:
                 text += (
-                    f"{medal} <b><u>{name}</u></b> <i>← Вы здесь</i>\n"
-                    f"   └ <code>${total:,.2f}</code>\n\n"
+                    f"{medal} <b><u>{name}</u></b> <i>← Вы</i> <code>${total:,.2f}</code>\n"
                 )
             else:
                 text += (
-                    f"{medal} <b>{name}</b>\n"
-                    f"   └ <code>${total:,.2f}</code>\n\n"
+                    f"{medal} <b>{name}</b> <code>${total:,.2f}</code>\n"
                 )
         
         # Показываем позицию пользователя, если он не в топе
@@ -928,21 +880,18 @@ async def menu_tops(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     """, (user_total,)) as cursor:
                         real_position = (await cursor.fetchone())[0]
             
-            text += f"\n<b>📍 Ваша позиция:</b> <code>#{real_position}</code>\n"
-            text += f"<b>💰 Ваш результат:</b> <code>${user_total:,.2f}</code>\n"
+            text += f"<b>📍 Ваша позиция:</b> <code>#{real_position}</code> | <code>${user_total:,.2f}</code>\n"
     
     keyboard = [
-        [
-            InlineKeyboardButton("🌅 День", callback_data="top_day"),
-            InlineKeyboardButton("📆 Неделя", callback_data="top_week")
-        ],
+        [InlineKeyboardButton("📊 Перейти к Аналитике", callback_data="tops_analytics_analytics")],
         [
             InlineKeyboardButton("📅 Месяц", callback_data="top_month"),
             InlineKeyboardButton("🏆 Все время", callback_data="top_all")
         ],
         [
-            InlineKeyboardButton("🔬 Топ аналитиков", callback_data="top_analysts"),
-            InlineKeyboardButton("👔 Топ менеджеров", callback_data="top_managers")
+            InlineKeyboardButton("🌅 День", callback_data="top_day"),
+            InlineKeyboardButton("📆 Неделя", callback_data="top_week"),
+            InlineKeyboardButton("🔬 Аналитики", callback_data="top_analysts")
         ],
         [InlineKeyboardButton("🔙 Назад", callback_data="menu_main")]
     ]
@@ -1066,7 +1015,7 @@ async def menu_stats_detailed(update: Update, context: ContextTypes.DEFAULT_TYPE
             days_active = (now - join_date).days
             text += f"<b>📅 В команде:</b> <code>{days_active} дней</code>\n"
     
-    keyboard = [[InlineKeyboardButton("🔙 Назад", callback_data="menu_stats")]]
+    keyboard = [[InlineKeyboardButton("🔙 Назад", callback_data="menu_main")]]
     await send_screen(update, context, text, None, InlineKeyboardMarkup(keyboard))
 
 async def profit_detailed(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1225,6 +1174,22 @@ async def top_managers(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def analytics_detailed(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.callback_query.answer("📊 Детальная аналитика в разработке", show_alert=True)
 
+# --- 🏆 ОБЪЕДИНЕННОЕ МЕНЮ ТОПОВ И АНАЛИТИКИ ---
+async def menu_tops_analytics(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    section = 'tops'  # По умолчанию показываем топы
+    
+    if query and query.data.startswith("tops_analytics_"):
+        section = query.data.split("_")[-1]
+        context.user_data['tops_analytics_section'] = section
+    else:
+        section = context.user_data.get('tops_analytics_section', 'tops')
+    
+    if section == 'analytics':
+        await menu_analytics(update, context)
+    else:
+        await menu_tops(update, context)
+
 # --- 📊 ANALYTICS ---
 async def menu_analytics(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
@@ -1283,48 +1248,42 @@ async def menu_analytics(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     text = (
         f"<b>📊 АНАЛИТИКА</b>\n"
-        f"━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
-        f"<b>📈 ПРОФИТЫ ПО ПЕРИОДАМ</b>\n"
-        f"├ <b>🌅 День:</b> <code>${day_stats[0] or 0:,.2f}</code>\n"
-        f"│  └ <code>{day_stats[1] or 0}</code> залетов | Средний: <code>${day_avg:,.2f}</code>\n"
-        f"├ <b>📆 Неделя:</b> <code>${week_stats[0] or 0:,.2f}</code>\n"
-        f"│  └ <code>{week_stats[1] or 0}</code> залетов | Средний: <code>${week_avg:,.2f}</code>\n"
-        f"├ <b>📅 Месяц:</b> <code>${month_stats[0] or 0:,.2f}</code>\n"
-        f"│  └ <code>{month_stats[1] or 0}</code> залетов | Средний: <code>${month_avg:,.2f}</code>\n"
-        f"└ <b>🏆 Всего:</b> <code>${all_stats[0] or 0:,.2f}</code>\n"
-        f"   └ <code>{all_stats[1] or 0}</code> залетов\n\n"
+        f"━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        f"<b>📈 ПРОФИТЫ:</b> День <code>${day_stats[0] or 0:,.2f}</code> ({day_stats[1] or 0}) | Неделя <code>${week_stats[0] or 0:,.2f}</code> ({week_stats[1] or 0}) | Месяц <code>${month_stats[0] or 0:,.2f}</code> ({month_stats[1] or 0}) | Всего <code>${all_stats[0] or 0:,.2f}</code> ({all_stats[1] or 0})\n"
     )
     
     if top_clients:
-        text += f"<b>🦣 ТОП МАМОНТОВ</b>\n"
+        text += f"<b>🦣 ТОП МАМОНТОВ:</b> "
         medals = ["🥇", "🥈", "🥉", "4️⃣", "5️⃣"]
         for idx, (name, total) in enumerate(top_clients, 1):
             medal = medals[idx-1] if idx <= 5 else f"{idx}."
-            text += f"{medal} <b>{name}</b> - <code>${total:,.2f}</code>\n"
+            text += f"{medal} <b>{name}</b> <code>${total:,.2f}</code> "
         text += "\n"
     
     if by_direction:
-        text += f"<b>🏦 ПО НАПРАВЛЕНИЯМ</b>\n"
+        text += f"<b>🏦 НАПРАВЛЕНИЯ:</b> "
         total_dir = sum(total for _, total, _ in by_direction)
         for direction, total, count in by_direction:
             percent = (total / total_dir * 100) if total_dir > 0 else 0
             dir_emoji = {"BTC": "₿", "USDT": "💵", "Card": "💳"}.get(direction, "💰")
-            text += f"├ {dir_emoji} <b>{direction}:</b> <code>${total:,.2f}</code>\n"
-            text += f"│  └ <code>{count}</code> залетов | <code>{percent:.1f}%</code> от общего\n"
+            text += f"{dir_emoji} <b>{direction}</b> <code>${total:,.2f}</code> ({count}, {percent:.1f}%) "
         text += "\n"
     
     if by_stage:
-        text += f"<b>📑 ПО СТАДИЯМ</b>\n"
+        text += f"<b>📑 СТАДИИ:</b> "
         total_stage = sum(total for _, total, _ in by_stage)
         for stage, total, count in by_stage:
             percent = (total / total_stage * 100) if total_stage > 0 else 0
             stage_emoji = {"Депозит": "💸", "Комиссия": "💼", "Налог": "📋"}.get(stage, "📊")
-            text += f"├ {stage_emoji} <b>{stage}:</b> <code>${total:,.2f}</code>\n"
-            text += f"│  └ <code>{count}</code> залетов | <code>{percent:.1f}%</code> от общего\n"
+            text += f"{stage_emoji} <b>{stage}</b> <code>${total:,.2f}</code> ({count}, {percent:.1f}%) "
+        text += "\n"
     
     keyboard = [
-        [InlineKeyboardButton("📊 Детальная аналитика", callback_data="analytics_detailed")],
-        [InlineKeyboardButton("🔙 Назад", callback_data="menu_main")]
+        [InlineKeyboardButton("🏆 Перейти к Топам", callback_data="tops_analytics_tops")],
+        [
+            InlineKeyboardButton("📊 Детали", callback_data="analytics_detailed"),
+            InlineKeyboardButton("🔙 Назад", callback_data="menu_main")
+        ]
     ]
     await send_screen(update, context, text, None, InlineKeyboardMarkup(keyboard))
 
@@ -1421,7 +1380,7 @@ async def adm_users_list(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 ORDER BY balance DESC 
                 LIMIT ? OFFSET ?
             """, (search_pattern, search_pattern, limit, offset)) as cursor:
-            users = await cursor.fetchall()
+                users = await cursor.fetchall()
             async with db.execute("""
                 SELECT COUNT(*) FROM users 
                 WHERE full_name LIKE ? OR username LIKE ?
@@ -1990,7 +1949,7 @@ async def pay_confirm_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"<b>💰 Сумма:</b> <code>${data['pay_amount']:,.2f}</code>\n"
         f"<b>🧾 Чек:</b> <code>{data['check_code']}</code>\n\n"
         f"<i>Чек будет добавлен в очередь выплат. Воркер получит его в меню зарплаты.</i>\n\n"
-        f"<b>⚠️ Баланс будет обнулен только после получения чека воркером.</b>"
+        f"<b>⚠️ Баланс воркера будет обнулен сразу после добавления чека.</b>"
     )
     kb = InlineKeyboardMarkup([
         [InlineKeyboardButton("✅ ДОБАВИТЬ ЧЕК", callback_data="pay_commit")],
@@ -2002,10 +1961,17 @@ async def pay_confirm_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def pay_execute(update: Update, context: ContextTypes.DEFAULT_TYPE):
     data = context.user_data
     async with aiosqlite.connect(DB_NAME) as db:
-        # НЕ обнуляем баланс сразу - только при получении чека
         # Создаем запись о выплате с is_received=0
         await db.execute("INSERT INTO payouts (worker_id, check_code, amount, is_received) VALUES (?, ?, ?, 0)", 
                          (data['pay_id'], data['check_code'], data['pay_amount']))
+        
+        # Обнуляем баланс сразу при создании чека, чтобы пользователь исчез из списка
+        await db.execute("""
+            UPDATE users 
+            SET balance = 0, analyst_balance = 0, manager_balance = 0 
+            WHERE user_id = ?
+        """, (data['pay_id'],))
+        
         await db.commit()
         
     await update.callback_query.message.edit_text(
@@ -2013,7 +1979,8 @@ async def pay_execute(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"<b>👤 Воркер:</b> <b>{data['pay_name']}</b>\n"
         f"<b>💰 Сумма:</b> <code>${data['pay_amount']:,.2f}</code>\n"
         f"<b>🧾 Чек:</b> <code>{data['check_code']}</code>\n\n"
-        f"<i>📨 Воркер получит уведомление о новой выплате в меню зарплаты.</i>",
+        f"<i>📨 Воркер получит уведомление о новой выплате в меню зарплаты.</i>\n"
+        f"<i>💰 Баланс воркера обнулен.</i>",
         parse_mode=ParseMode.HTML
     )
     
@@ -2064,21 +2031,8 @@ async def receive_payout(update: Update, context: ContextTypes.DEFAULT_TYPE):
         check_code = payout[0]
         amount = payout[1]
         
-        # Получаем текущие балансы для обнуления
-        async with db.execute("""
-            SELECT balance, analyst_balance, manager_balance
-            FROM users WHERE user_id = ?
-        """, (user_id,)) as cursor:
-            balances = await cursor.fetchone()
-        
-        # Обнуляем балансы
-        await db.execute("""
-            UPDATE users 
-            SET balance = 0, analyst_balance = 0, manager_balance = 0 
-            WHERE user_id = ?
-        """, (user_id,))
-        
-        # Помечаем чек как полученный
+        # Баланс уже обнулен при создании чека админом
+        # Просто помечаем чек как полученный
         await db.execute("""
             UPDATE payouts 
             SET is_received = 1 
@@ -2170,6 +2124,7 @@ if __name__ == "__main__":
     app.add_handler(CallbackQueryHandler(menu_stats_detailed, pattern="^menu_stats_detailed$"))
     app.add_handler(CallbackQueryHandler(menu_clients, pattern="^menu_clients"))
     app.add_handler(CallbackQueryHandler(client_view, pattern="^client_view_"))
+    app.add_handler(CallbackQueryHandler(menu_finances, pattern="^menu_finances$|^finances_(payouts|profits)$"))
     app.add_handler(CallbackQueryHandler(menu_profits, pattern="^menu_profits$|^profit_period_"))
     app.add_handler(CallbackQueryHandler(profit_detailed, pattern="^profit_detailed$"))
     app.add_handler(CallbackQueryHandler(profit_export, pattern="^profit_export$"))
@@ -2177,13 +2132,12 @@ if __name__ == "__main__":
     app.add_handler(CallbackQueryHandler(receive_payout, pattern="^receive_payout_"))
     app.add_handler(CallbackQueryHandler(salary_chart, pattern="^salary_chart$"))
     app.add_handler(CallbackQueryHandler(salary_export, pattern="^salary_export$"))
+    app.add_handler(CallbackQueryHandler(menu_tops_analytics, pattern="^menu_tops_analytics$|^tops_analytics_(tops|analytics)$"))
     app.add_handler(CallbackQueryHandler(menu_tops, pattern="^menu_tops$|^top_(day|week|month|all)$"))
     app.add_handler(CallbackQueryHandler(top_analysts, pattern="^top_analysts$"))
     app.add_handler(CallbackQueryHandler(top_managers, pattern="^top_managers$"))
     app.add_handler(CallbackQueryHandler(menu_analytics, pattern="^menu_analytics$"))
     app.add_handler(CallbackQueryHandler(analytics_detailed, pattern="^analytics_detailed$"))
-    app.add_handler(CallbackQueryHandler(menu_help, pattern="^menu_help$"))
-    app.add_handler(CallbackQueryHandler(menu_settings, pattern="^menu_settings$"))
     app.add_handler(CallbackQueryHandler(menu_main, pattern="^menu_main$"))
     app.add_handler(CallbackQueryHandler(admin_dashboard, pattern="^admin_dashboard$"))
     app.add_handler(CallbackQueryHandler(adm_users_list, pattern="^adm_users_list"))
