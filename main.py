@@ -32,9 +32,9 @@ DB_NAME = "team_stats.db"
 # DYNAMIC PATH RESOLUTION
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 IMG_PATHS = {
-    "welcome": "/Users/nikitakurlov/tima/logo.png",
-    "profile": "/Users/nikitakurlov/tima/profile.png",
-    "pay": "/Users/nikitakurlov/tima/pay.png"
+    "welcome": "/logo.png",
+    "profile": "/profile.png",
+    "pay": "/pay.png"
 }
 
 # LOGGING
