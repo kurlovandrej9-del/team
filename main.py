@@ -115,6 +115,11 @@ async def send_screen(update: Update, context: ContextTypes.DEFAULT_TYPE, text: 
     file_path = IMG_PATHS.get(photo_key)
     has_photo = file_path and os.path.exists(file_path)
     
+    # Debug logging
+    logger.info(f"Photo key: {photo_key}")
+    logger.info(f"File path: {file_path}")
+    logger.info(f"Has photo: {has_photo}")
+    
     is_edit = bool(query)
 
     try:
@@ -122,12 +127,14 @@ async def send_screen(update: Update, context: ContextTypes.DEFAULT_TYPE, text: 
             if has_photo:
                 # If message already has photo, edit media
                 if message.photo:
-                    media = InputMediaPhoto(open(file_path, 'rb'), caption=text, parse_mode=ParseMode.HTML)
-                    await message.edit_media(media=media, reply_markup=markup)
+                    with open(file_path, 'rb') as photo_file:
+                        media = InputMediaPhoto(photo_file, caption=text, parse_mode=ParseMode.HTML)
+                        await message.edit_media(media=media, reply_markup=markup)
                 else:
                     # Message had no photo, delete and send new
                     await message.delete()
-                    await message.reply_photo(photo=open(file_path, 'rb'), caption=text, reply_markup=markup, parse_mode=ParseMode.HTML)
+                    with open(file_path, 'rb') as photo_file:
+                        await message.reply_photo(photo=photo_file, caption=text, reply_markup=markup, parse_mode=ParseMode.HTML)
             else:
                 # No photo needed
                 if message.photo:
@@ -138,7 +145,8 @@ async def send_screen(update: Update, context: ContextTypes.DEFAULT_TYPE, text: 
         else:
             # New message
             if has_photo:
-                await message.reply_photo(photo=open(file_path, 'rb'), caption=text, reply_markup=markup, parse_mode=ParseMode.HTML)
+                with open(file_path, 'rb') as photo_file:
+                    await message.reply_photo(photo=photo_file, caption=text, reply_markup=markup, parse_mode=ParseMode.HTML)
             else:
                 await message.reply_text(text, reply_markup=markup, parse_mode=ParseMode.HTML)
     except BadRequest as e:
